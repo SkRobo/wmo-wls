@@ -6,7 +6,12 @@ We use slightly modified version of the CSM, so if you want to compile it
 yourself it's recommended to apply patch `csm.patch` first.
 
 ## Usage
-First unpack datasets into "datasets" folder:
+Download datasets archive:
+```sh
+wget https://github.com/SkRobo/wmo-wls/releases/download/0.1/datasets.tar.bz2
+```
+
+And unpack it:
 ```sh
 $ bzip2 -dc datasets.tar.bz2 | tar xv
 ```
