@@ -1,0 +1,43 @@
+diff --git a/sm/csm/icp/icp_loop.c b/sm/csm/icp/icp_loop.c
+index f64d17a..66168c1 100644
+--- a/sm/csm/icp/icp_loop.c
++++ b/sm/csm/icp/icp_loop.c
+@@ -54,7 +54,7 @@ int icp_loop(struct sm_params*params, const double*q0, double*x_new,
+ 
+ 		/* If not many correspondences, bail out */
+ 		int num_corr = ld_num_valid_correspondences(laser_sens);
+-		double fail_perc = 0.05;
++		double fail_perc = 0.01;
+ 		if(num_corr < fail_perc * laser_sens->nrays) { /* TODO: arbitrary */
+ 			sm_error("	: before trimming, only %d correspondences.\n",num_corr);
+ 			all_is_okay = 0;
+diff --git a/sm/csm/laser_data.c b/sm/csm/laser_data.c
+index 7f47fb7..3f2546f 100644
+--- a/sm/csm/laser_data.c
++++ b/sm/csm/laser_data.c
+@@ -251,10 +251,10 @@ int ld_valid_fields(LDP ld)  {
+ 		}
+ 		
+ 	}
+-	/* Checks that there is at least 10% valid rays */
++	/* Checks that there is at least 1% valid rays */
+ 	int num_valid   = count_equal(ld->valid, ld->nrays, 1);
+ 	int num_invalid = count_equal(ld->valid, ld->nrays, 0);
+-	if (num_valid < ld->nrays * 0.10) {
++	if (num_valid < ld->nrays * 0.01) {
+ 		sm_error("Valid: %d/%d invalid: %d.\n", num_valid, ld->nrays, num_invalid);
+ 		return 0;
+ 	}
+diff --git a/sm/csm/laser_data_json.c b/sm/csm/laser_data_json.c
+index 318c170..4a54974 100644
+--- a/sm/csm/laser_data_json.c
++++ b/sm/csm/laser_data_json.c
+@@ -100,8 +100,6 @@ JO result_to_json(struct sm_params*p, struct sm_result *r) {
+ 	
+ 		if(p->do_compute_covariance) {
+ 			jo_add(jo, "cov_x",   matrix_to_json(r->cov_x_m ) );
+-			jo_add(jo, "dx_dy1",  matrix_to_json(r->dx_dy1_m) );
+-			jo_add(jo, "dx_dy2",  matrix_to_json(r->dx_dy2_m) );
+ 		}
+ 	}
+ 		jo_add_int(jo, "iterations", r->iterations);
