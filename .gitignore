@@ -1,3 +1,9 @@
+# Data
+datasets.tar.bz2
+datasets/
+figures/
+results/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

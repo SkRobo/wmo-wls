@@ -8,8 +8,7 @@ from scipy.sparse.linalg import lsqr
 import scipy
 import sys, os, logging
 
-ALPHAS = [0.00001, 0.00005, 0.0001, 0.00025, 0.0005, 0.00075,
-          0.001, 0.002, 0.003, 0.004, 0.005, 0.006, 0.007, 0.008, 0.009,
+ALPHAS = [0.001, 0.002, 0.003, 0.004, 0.005, 0.006, 0.007, 0.008, 0.009,
           0.01, 0.025, 0.05, 0.075, 0.1, 0.5, 1.0]
 
 def calc_p_deriv_i(i, s_phi, indexes):
@@ -132,24 +131,30 @@ def nonlin_optim(s0, alpha, args):
 
 RHO = 10
 
-if __name__ == '__main__':
-    logging.basicConfig(
-        format='[%(asctime)s] %(levelname)s: %(message)s',
-        level=logging.INFO)
 
-    dataset_n = int(sys.argv[1])
+def proc(dataset_n, start_index, end_index):
     os.makedirs('./results/nonlinear/%d/' % dataset_n, exist_ok=True)
 
     match, cov, indexes, odom = mit_load_data(dataset_n)
 
+    m = np.ones(len(indexes), np.bool)
+    if start_index is not None:
+        m &= indexes[:, 0] >= start_index
+    if end_index is not None:
+        m &= indexes[:, 1] <= end_index
+
+    match = match[m]
+    cov = cov[m]
+    indexes = indexes[m]
+    indexes -= np.min(indexes)
+
     logging.info('Linear optimization')
     d0 = wls_optim(match, cov, indexes, odom, perc=RHO)
-    np.save('results/nonlinear/%d/linear.npy' % dataset_n, integr(d0))
+    np.save('results/nonlinear/%d/%d_linear.npy' % (dataset_n, start_index), d0)
 
     d0 = np.hstack([d0[:, 0], d0[:, 1], d0[:, 2]])
 
     s0 = d0.copy()
-
 
     args = get_args(match, cov, indexes, odom, RHO)
 
@@ -160,7 +165,7 @@ if __name__ == '__main__':
         lin = f(d0, m, w_xy, w_phi, alpha, indexes, indices, indptr)
         init = f(s0, m, w_xy, w_phi, alpha, indexes, indices, indptr)
 
-        res = nonlin_optim(d0, alpha, args)
+        res = nonlin_optim(s0, alpha, args)
 
         logging.info('Linear:\t%f', lin)
         logging.info('Init:\t%f', init)
@@ -169,6 +174,27 @@ if __name__ == '__main__':
         l = len(res.x)//3
         res_data = np.array([res.x[:l], res.x[l:-l], res.x[-l:]]).T
 
-        np.save('results/nonlinear/%d/%.3f.npy' % (dataset_n, alpha),
-            integr(res_data))
+        np.save('results/nonlinear/%d/%d_%.3f.npy' % (dataset_n, k, alpha),
+            res_data)
         s0 = res.x
+
+
+BLOCK = 600
+STEP = 300
+
+if __name__ == '__main__':
+    logging.basicConfig(
+        format='[%(asctime)s] %(levelname)s: %(message)s',
+        level=logging.INFO)
+
+    dataset_n = int(sys.argv[1])
+    gt = np.load('datasets/mit/ground_truth/%d.npy' % dataset_n)
+
+    k = 0
+    while k < len(gt) - BLOCK//2:
+        logging.info('Started block: %d/%d', k, len(gt))
+        start = k
+        end = k+BLOCK
+
+        proc(dataset_n, start, end)
+        k += STEP
