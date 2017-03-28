@@ -3,14 +3,46 @@ from plotter import plt, plot_grey_map, plot_diff_abs_comp
 from tools import poses_to_zero, integr_dist, rot, c2xy, integr
 from wls import mit_load_data, build_a_xy, build_indices
 from scipy import sparse
+import progressbar, glob, multiprocessing
 from scipy.sparse.linalg import lsqr
 from matplotlib import rc
 from nonlinear import ALPHAS
 import numpy as np
 import os
 
-os.makedirs('./figures/mit/', exist_ok=True)
-os.makedirs('./figures/skoltech/', exist_ok=True)
+# ================= pose graphs ====================
+
+def plot_adj_f2f():
+    plt.figure(figsize=(2, 2))
+    a = np.zeros((20, 20), np.bool)
+    a[:-1, 1:] = np.eye(19)
+    plt.spy(a)
+    plt.tight_layout()
+    plt.grid()
+    plt.savefig('./figures/adj_f2f.eps', dpi=300)
+
+def plot_adj_kf():
+    plt.figure(figsize=(2, 2))
+    a = np.zeros((20, 20), np.bool)
+    a[0, 1:4] = 1
+    a[3, 4:10] = 1
+    a[9, 10:15] = 1
+    a[14, 15:18] = 1
+    a[17, 18:] = 1
+    plt.spy(a)
+    plt.tight_layout()
+    plt.grid()
+    plt.savefig('./figures/adj_kf.eps', dpi=300)
+
+def plot_adj_opt():
+    plt.figure(figsize=(2, 2))
+    a = np.zeros((20, 20), np.bool)
+    for i in range(1, 6):
+        a[:-i, i:] |= np.eye(20-i, dtype=np.bool)
+    plt.spy(a)
+    plt.tight_layout()
+    plt.grid()
+    plt.savefig('./figures/adj_opt.eps', dpi=300)
 
 # ================= check sk relation ==============
 
@@ -22,24 +54,26 @@ def sk_err(method, poses):
     print('%s\t%f\t%f\t%f\t%f' % (
         method, xy, xy/140*1000, angle, np.degrees(angle)))
 
-
-def sk_calc_error(i = 20):
+def sk_calc_error(win=10):
     print('\t\tXY, m\t\tXY, mm/m\tAngle, rad\tAngle, deg')
     sk_err('Frame-to-frame', np.load('results/wls/skoltech/%d.npy' % 1))
     sk_err('Keyframe', np.load('results/keyframe/skoltech/kf.npy'))
-    sk_err('WMO-WLS\t', np.load('results/wls/skoltech/%d.npy' % i))
+    sk_err('WMO-WLS\t', np.load('results/wls/skoltech/%d.npy' % win))
 
 # ================= keyframes ======================
-def sk_plot_cloud(name, poses):
+def sk_plot_cloud(name, poses, ax2_lim):
     scans = np.load('datasets/skoltech/scans.npy')
-    plot_grey_map(scans, poses, 240, ms=0.5)
+    plot_grey_map(scans[::10], poses[::10], 240, ms=0.5, ax2_lim=ax2_lim)
     plt.tight_layout()
     plt.savefig('./figures/skoltech/lab_%s.png' % name, dpi=300)
 
-def sk_plot_all_clouds():
-    sk_plot_cloud('kf', np.load('results/keyframe/skoltech/kf.npy'))
-    sk_plot_cloud('opt', np.load('results/wls/skoltech/%d.npy' % 20))
-    sk_plot_cloud('simp', np.load('results/wls/skoltech/%d.npy' % 1))
+def sk_plot_all_clouds(win=10):
+    sk_plot_cloud('kf', np.load('results/keyframe/skoltech/kf.npy'),
+        [-14, -6, -38, -32])
+    sk_plot_cloud('opt', np.load('results/wls/skoltech/%d.npy' % win),
+        [-13, -5, -39, -33])
+    sk_plot_cloud('f2f', np.load('results/wls/skoltech/%d.npy' % 1),
+        [-13, -5, -37, -31])
 
 
 # ================ MIT RMSE ===================
@@ -92,8 +126,13 @@ def calc_rms(win):
 def mit_rmse():
     plt.figure()
     data = [calc_rms(i) for i in range(1, 21)]
-    plt.plot(range(1, 21), data, color='black')
-    plt.plot(range(1, 21), [calc_rms_kf()]*20, '--', color='black')
+    plt.plot(range(2, 21), data[1:], color='black', label='WMO-WLS')
+    plt.plot(range(1, 21), data[:1]*20, '-.',
+        color='black', label='Frame-to-frame')
+    plt.plot(range(1, 21), [calc_rms_kf()]*20, '--',
+        color='black', label='Keyframe')
+    plt.legend()
+    plt.xlim([2, 20])
     plt.grid()
     plt.xlabel('Window size')
     plt.ylabel('RMSE')
@@ -102,19 +141,19 @@ def mit_rmse():
 
 
 # ================= MIT comparison ==================
-def mit_comparison(n=10):
+def mit_comparison(n=10, end=None):
     plt.figure()
     gt = poses_to_zero(np.load('./datasets/mit/ground_truth/%d.npy' % n))
     poses = np.load('./results/wls/mit/20/%d.npy' % n)
     kf = np.load('./results/keyframe/mit/%d.npy' % n)
 
-    plot_diff_abs_comp(gt, poses, kf)
+    plot_diff_abs_comp(gt[:end], poses[:end], kf[:end])
     plt.tight_layout()
     plt.savefig('./figures/mit/result_%d.png' % n, dpi=300)
 
 # ================= MIT Point cloud ==================
 def mit_cloud():
-    plt.figure(figsize=(10, 5))
+    plt.figure(figsize=(8, 4))
     scans = np.load('datasets/mit/scans/0.npy')
     poses = poses_to_zero(np.load('datasets/mit/ground_truth/0.npy'))
     n = len(scans)
@@ -158,100 +197,142 @@ def calc_phi_err(s, m, w, indexes):
     r_phi = (A.dot(s_phi) - m_phi*w_phi).astype(np.float64)
     return np.linalg.norm(r_phi)
 
-# TODO replace with linear.npy
-def lin_opt(match, cov, indexes):
-    indices, indptr = build_indices(indexes)
+def filter_params(path):
+    part1, part2 = path.split('/')[-2:]
+    dataset_n = int(part1)
+    part3, part4 = part2.replace('.npy', '').split('_')
+    start = int(part3)
+    alpha = float(part4) if part4 != 'linear' else None
+    return dataset_n, start, alpha
 
-    # angle subsystem optimization
-    w_phi = 1/cov[:, 2, 2]
-    A = sparse.csr_matrix((np.ones(len(indices), np.float64), indices, indptr))
-    A = sparse.diags(w_phi, 0, format='csr').dot(A)
-    m_phi = match[:, 2]*w_phi
-    phi_opt = lsqr(A, m_phi)[0]
-
-    w_xy = 1/np.hstack([cov[:, 0, 0], cov[:, 1, 1]])
-    P = build_a_xy(indexes, phi_opt, indices, indptr)
-    P = sparse.diags(w_xy, 0, format='csr').dot(P)
-    m_xy = np.hstack([match[:, 0], match[:, 1]])*w_xy
-
-    xy_opt = lsqr(P, m_xy)[0]
-
-    return np.hstack([xy_opt, phi_opt])
-
-def calc_dist_diff(gt, s):
-    l = len(s)//3
-    v = integr(np.vstack([s[:l], s[l:-l], s[-l:]]).T)
-    return np.linalg.norm(v[-1, :2] - gt[-1, :2])
-
-def mit_nonlin_errs_comp(dataset_n=1):
-    path = 'results/nonlinear/%d/' % dataset_n
-    data = [np.load(path + '%.3f.npy' % v) for v in ALPHAS]
+def filtered_data(dataset_n, start_index, end_index):
     match, cov, indexes, odom = mit_load_data(dataset_n)
-    gt = poses_to_zero(np.load('datasets/mit/ground_truth/%d.npy' % dataset_n))
+    m = np.ones(len(indexes), np.bool)
+    if start_index is not None:
+        m &= indexes[:, 0] >= start_index
+    if end_index is not None:
+        m &= indexes[:, 1] <= end_index
 
-    m = np.hstack([
-        match[:, 0],
-        match[:, 1],
-        match[:, 2],
-    ])
-    w = np.hstack([
-        1/cov[:, 0, 0],
-        1/cov[:, 1, 1],
-        1/cov[:, 2, 2],
-    ])
+    match = match[m]
+    cov = cov[m]
+    indexes = indexes[m]
+    indexes -= np.min(indexes)
+    m = np.hstack([match[:, 0], match[:, 1], match[:, 2]])
+    w = np.hstack([1/cov[:, 0, 0]**2, 1/cov[:, 1, 1]**2, 1/cov[:, 2, 2]**2])
+    return m, w, indexes
 
-    s0 = lin_opt(match, cov, indexes)
-    xy_err0 = calc_xy_err(s0, m, w, indexes)
-    phi_err0 = calc_phi_err(s0, m, w, indexes)
+def err_worker(args):
+    path, params = args
+    dataset_n, start, alpha = params
+    opt = np.load(path)
+    m, w, indexes = filtered_data(dataset_n, start, start + BLOCK)
+    key = (dataset_n, start, alpha)
+    s = np.hstack([opt[:, 0], opt[:, 1], opt[:, 2]])
+    xy_err = calc_xy_err(s, m, w, indexes)
+    phi_err = calc_phi_err(s, m, w, indexes)
+    return xy_err, phi_err
 
+def mit_nonlin_err(dataset_n=10, start=0):
+    path_pattern = 'results/nonlinear/%d/%d_*.npy' % (dataset_n, start)
+    paths = glob.glob(path_pattern)
+    params = [filter_params(path) for path in paths]
 
-    xy_err = np.array([calc_xy_err(s, m, w, indexes) for s in data])
-    phi_err = np.array([calc_phi_err(s, m, w, indexes) for s in data])
+    alphas = sorted(set([
+        alpha for _, _, alpha in params
+        if alpha is not None
+    ]))
+
+    xy_errs = []
+    phi_errs = []
+
+    for alpha in alphas:
+        path = path_pattern.replace('*', '%.3f' % alpha)
+        opt = np.load(path)
+        m, w, indexes = filtered_data(dataset_n, start, start + BLOCK)
+        s = np.hstack([opt[:, 0], opt[:, 1], opt[:, 2]])
+        xy_errs.append(calc_xy_err(s, m, w, indexes))
+        phi_errs.append(calc_phi_err(s, m, w, indexes))
 
     plt.figure()
     ax = plt.subplot(111)
-    ax.plot(ALPHAS, xy_err/xy_err0, color='black', label=r'$\varepsilon^{xy} (\alpha)/\varepsilon^{xy} (+ \infty)$')
-    ax.plot(ALPHAS, phi_err/phi_err0, '--', color='black', label=r'$\varepsilon^a (\alpha)/\varepsilon^a (+ \infty)$')
+    ax.plot(alphas, xy_errs, color='black',
+        label=r'$\varepsilon^{xy} (\alpha)/\varepsilon^{xy} (+ \infty)$')
+    ax.plot(alphas, phi_errs, '--', color='black',
+        label=r'$\varepsilon^a (\alpha)/\varepsilon^a (+ \infty)$')
     plt.legend()
     plt.ylim([0.9, 1.2])
     plt.xlim([0.001, 1])
     plt.xlabel(r'$\alpha$')
-    plt.ylabel('Ratio')
     ax.set_xscale("log", nonposx='clip')
     plt.grid()
     plt.tight_layout()
-    plt.savefig('figures/mit/nonlin_err_%d.eps' % dataset_n, dpi=300)
+    plt.savefig('figures/mit/nonlin_err.eps', dpi=300)
+
+def mit_nonlin_dist():
+    paths = glob.glob('results/nonlinear/*/*.npy')
+    params = [filter_params(path) for path in paths]
+
+    alphas = sorted(set([alpha for _, _, alpha in params if alpha is not None]))
+    results = dict((alpha, []) for alpha in alphas)
+    results[None] = []
+    bar = progressbar.ProgressBar(max_value=len(paths))
+    for path, (dataset_n, start, alpha) in bar(zip(paths, params)):
+        opt = integr(np.load(path))
+        # bug in the nonlinear.py line 144
+        if len(opt) == BLOCK + 1:
+            opt = opt[:1200]
+        gt_path = './datasets/mit/ground_truth/%d.npy' % dataset_n
+        gt = poses_to_zero(np.load(gt_path)[start:start+BLOCK])
+        assert(len(opt) == len(gt))
+        res = np.linalg.norm(opt[-1, :2] - gt[-1, :2])/integr_dist(gt)
+        results[alpha].append(res)
+    res = np.array([
+        np.sqrt(np.mean(np.array(results[alpha])**2))
+        for alpha in alphas
+    ])
+    lin_res = np.sqrt(np.mean(np.array(results[None])**2))
+    res /= lin_res
 
     plt.figure()
     ax = plt.subplot(111)
-    d2_0 = calc_dist_diff(gt, s0)
-    d2 = [calc_dist_diff(gt, s) for s in data]
-    ax.plot(ALPHAS, d2/d2_0, 'black')
+    ax.plot(alphas, res, 'black', label=r'$RMSE(\alpha)/RMSE(+\infty)$')
+    plt.legend()
     plt.xlim([0.001, 1])
-    plt.ylim([0., 1.5])
+    plt.ylim([0.95, 1.05])
     plt.xlabel(r'$\alpha$')
-    plt.ylabel('Ratio')
     ax.set_xscale("log", nonposx='clip')
     plt.grid()
-    plt.savefig('figures/mit/nonlin_dist_%d.eps' % dataset_n, dpi=300)
+    plt.savefig('figures/mit/nonlin_dist.eps', dpi=300)
 
 if __name__ == '__main__':
-    rc('font',**{'family':'sans-serif','sans-serif':['Helvetica']})
+    os.makedirs('./figures/mit/', exist_ok=True)
+    os.makedirs('./figures/skoltech/', exist_ok=True)
+
+    font = {'family':'sans-serif','sans-serif':['Helvetica'],
+            'size': 16}
+    rc('font',**font)
     rc('text', usetex=True)
 
+    print('misc')
+    plot_adj_f2f()
+    plot_adj_kf()
+    plot_adj_opt()
+
     print('sk_calc_error')
-    sk_calc_error()
+    sk_calc_error(10)
+
     print('sk_plot_all_clouds')
-    sk_plot_all_clouds()
+    sk_plot_all_clouds(10)
+
     print('mit_rmse')
     mit_rmse()
     print('mit_comparison')
-    mit_comparison()
+    mit_comparison(end=3500)
     print('mit_cloud')
     mit_cloud()
-    '''
-    mit_nonlin_errs_comp(1)
-    mit_nonlin_errs_comp(2)
-    mit_nonlin_errs_comp(3)
-    mit_nonlin_errs_comp(10)
-    '''
+
+    print('nonlin dist err')
+    mit_nonlin_dist()
+
+    print('nonlin err')
+    mit_nonlin_err()

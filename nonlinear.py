@@ -126,7 +126,7 @@ def get_args(match, cov, indexes, odom, perc):
 
 def nonlin_optim(s0, alpha, args):
     m, w_xy, w_phi, indexes, indices, indptr = args
-    return scipy.optimize.minimize(f, s0, jac=grad, method='BFGS',
+    return scipy.optimize.minimize(f, s0, jac=grad, method='L-BFGS-B',
         args=(m, w_xy, w_phi, alpha, indexes, indices, indptr))
 
 RHO = 10
@@ -179,8 +179,8 @@ def proc(dataset_n, start_index, end_index):
         s0 = res.x
 
 
-BLOCK = 600
-STEP = 300
+BLOCK = 1200
+STEP = 600
 
 if __name__ == '__main__':
     logging.basicConfig(
