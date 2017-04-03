@@ -5,33 +5,38 @@ from tools import poses_to_zero, integr
 from scipy import sparse
 import numpy as np
 from scipy.sparse.linalg import lsqr
-import scipy
-import sys, os, logging
+import scipy, random
+import sys, os, logging, multiprocessing
 
 ALPHAS = [0.001, 0.002, 0.003, 0.004, 0.005, 0.006, 0.007, 0.008, 0.009,
           0.01, 0.025, 0.05, 0.075, 0.1, 0.5, 1.0]
 
-def calc_p_deriv_i(i, s_phi, indexes):
-    mask = (indexes[:, 0] <= i) & (i < indexes[:, 1])
-
+def calc_p_deriv_i(i, s_phi, indexes, masks):
     k = 0
-    angles = []
-    row_ind = []
-    column_ind = []
-    for m in np.nonzero(mask)[0]:
+    # precomputed value for max_win=20
+    l = 1330
+    angles = np.empty(l, np.float32)
+    row_ind = np.empty(l, np.uint32)
+    column_ind = np.empty(l, np.uint32)
+
+    old_v1 = None
+    for m in masks[i]:
         v1 = indexes[m][1]
-        angles.append(np.cumsum(s_phi[i:v1-1]))
+        if old_v1 is None or old_v1 != v1:
+            angs = s_phi[i:v1-1]
+            n = len(angs)
+            ang_cum = np.cumsum(angs)
+            inds = np.arange(i+1, v1)
+            old_v1 = v1
 
-        n = len(angles[-1])
-        if n == 0:
-            continue
+        angles[k:k+n] = ang_cum
+        row_ind[k:k+n] = m*np.ones(n)
+        column_ind[k:k+n] = inds
+        k += n
 
-        row_ind.append(m*np.ones(n))
-        column_ind.append(np.arange(i+1, v1))
-
-    angles = np.hstack(angles)
-    row_ind = np.hstack(row_ind)
-    column_ind = np.hstack(column_ind)
+    angles = angles[:k]
+    row_ind = row_ind[:k]
+    column_ind = column_ind[:k]
 
     shape = (len(indexes), len(s_phi))
     a_cos = sparse.coo_matrix((angles, (row_ind, column_ind)), shape)
@@ -43,17 +48,18 @@ def calc_p_deriv_i(i, s_phi, indexes):
     b = sparse.hstack([a_cos, -a_sin], format='coo')
     return sparse.vstack([a, b], format='coo')
 
-def calc_p_deriv(s_xy, s_phi, w_xy, r_xy, e_xy, indexes):
+
+def calc_p_deriv(s_xy, s_phi, w_xy, r_xy, e_xy, indexes, masks):
     n = len(s_phi)
     p_deriv = np.zeros(n, np.float32)
     sparse_w_xy = sparse.diags(w_xy, 0, format='csr')
     for i in range(n-1):
-        deriv = calc_p_deriv_i(i, s_phi, indexes)
+        deriv = calc_p_deriv_i(i, s_phi, indexes, masks)
         p_deriv[i] = (sparse_w_xy.dot(deriv).dot(s_xy)).T.dot(r_xy)
     return 1/e_xy*p_deriv
 
 
-def comp_jacob(x, m, w_xy, A, P, alpha, indexes):
+def comp_jacob(x, m, w_xy, A, P, alpha, indexes, masks):
     n = len(x)//3
     assert(len(x)%3 == 0)
     s_xy = x[:2*n]
@@ -73,11 +79,11 @@ def comp_jacob(x, m, w_xy, A, P, alpha, indexes):
 
     j_phi = alpha/e_phi*A.T.dot(r_phi)
 
-    j_phi += calc_p_deriv(s_xy, s_phi, w_xy, r_xy, e_xy, indexes)
+    j_phi += calc_p_deriv(s_xy, s_phi, w_xy, r_xy, e_xy, indexes, masks)
     return np.hstack([j_xy, j_phi])
 
 
-def f(s, m, w_xy, w_phi, alpha, indexes, indices, indptr):
+def f(s, m, w_xy, w_phi, alpha, indexes, indices, indptr, masks=None):
     l = len(s)//3
     s_xy = s[:2*l]
     s_phi = s[2*l:]
@@ -98,7 +104,7 @@ def f(s, m, w_xy, w_phi, alpha, indexes, indices, indptr):
     logging.debug('Calculated error function: %f', e)
     return e
 
-def grad(s, m, w_xy, w_phi, alpha, indexes, indices, indptr):
+def grad(s, m, w_xy, w_phi, alpha, indexes, indices, indptr, masks):
     logging.debug('Jacobian start: %.3f' % alpha)
     l = len(s)//3
     s_xy = s[:2*l]
@@ -110,7 +116,7 @@ def grad(s, m, w_xy, w_phi, alpha, indexes, indices, indptr):
     A = sparse.csr_matrix((np.ones(len(indices), np.float32), indices, indptr))
     A = sparse.diags(w_phi, 0, format='csr').dot(A)
 
-    j = comp_jacob(s, m, w_xy, A, P, alpha, indexes)
+    j = comp_jacob(s, m, w_xy, A, P, alpha, indexes, masks)
     logging.debug('Jacobian done: %.3f' % alpha)
     return j
 
@@ -124,10 +130,21 @@ def get_args(match, cov, indexes, odom, perc):
     indices, indptr = build_indices(indexes)
     return (m, w_xy, w_phi, indexes, indices, indptr)
 
+def gen_masks(indexes):
+    masks = [
+        np.nonzero((indexes[:, 0] <= i) & (i < indexes[:, 1]))[0]
+        for i in range(np.max(indexes[:, 0]))
+    ]
+    for i, v in enumerate(masks):
+        masks[i] = v[indexes[v, 1] - 1 > i]
+    return masks
+
+
 def nonlin_optim(s0, alpha, args):
     m, w_xy, w_phi, indexes, indices, indptr = args
-    return scipy.optimize.minimize(f, s0, jac=grad, method='L-BFGS-B',
-        args=(m, w_xy, w_phi, alpha, indexes, indices, indptr))
+    masks = gen_masks(indexes)
+    return scipy.optimize.minimize(f, s0, jac=grad, method='BFGS',
+        args=(m, w_xy, w_phi, alpha, indexes, indices, indptr, masks))
 
 RHO = 10
 
@@ -140,6 +157,7 @@ def proc(dataset_n, start_index, end_index):
     m = np.ones(len(indexes), np.bool)
     if start_index is not None:
         m &= indexes[:, 0] >= start_index
+
     if end_index is not None:
         m &= indexes[:, 1] <= end_index
 
@@ -148,8 +166,10 @@ def proc(dataset_n, start_index, end_index):
     indexes = indexes[m]
     indexes -= np.min(indexes)
 
-    logging.info('Linear optimization')
-    d0 = wls_optim(match, cov, indexes, odom, perc=RHO)
+    logging.info('---- Linear optimization n: %d, start: %d',
+            dataset_n, start_index)
+
+    d0 = wls_optim(match, cov, indexes, odom, perc=RHO).astype(np.float32)
     np.save('results/nonlinear/%d/%d_linear.npy' % (dataset_n, start_index), d0)
 
     d0 = np.hstack([d0[:, 0], d0[:, 1], d0[:, 2]])
@@ -161,12 +181,15 @@ def proc(dataset_n, start_index, end_index):
     (m, w_xy, w_phi, indexes, indices, indptr) = args
 
     for alpha in reversed(ALPHAS):
-        logging.info('==== Started %.3f', alpha)
+        logging.info('==== Started n: %d, start: %d, alpha: %.3f',
+            dataset_n, start_index, alpha)
         lin = f(d0, m, w_xy, w_phi, alpha, indexes, indices, indptr)
         init = f(s0, m, w_xy, w_phi, alpha, indexes, indices, indptr)
 
         res = nonlin_optim(s0, alpha, args)
 
+        logging.info('==== Finished n: %d, start: %d, alpha: %.3f',
+            dataset_n, start_index, alpha)
         logging.info('Linear:\t%f', lin)
         logging.info('Init:\t%f', init)
         logging.info('After:\t%f', res.fun)
@@ -174,8 +197,8 @@ def proc(dataset_n, start_index, end_index):
         l = len(res.x)//3
         res_data = np.array([res.x[:l], res.x[l:-l], res.x[-l:]]).T
 
-        np.save('results/nonlinear/%d/%d_%.3f.npy' % (dataset_n, k, alpha),
-            res_data)
+        np.save('results/nonlinear/%d/%d_%.3f.npy' %
+            (dataset_n, start_index, alpha), res_data)
         s0 = res.x
 
 
@@ -187,14 +210,19 @@ if __name__ == '__main__':
         format='[%(asctime)s] %(levelname)s: %(message)s',
         level=logging.INFO)
 
-    dataset_n = int(sys.argv[1])
-    gt = np.load('datasets/mit/ground_truth/%d.npy' % dataset_n)
+    tasks = []
+    for dataset_n in range(24):
+        gt = np.load('datasets/mit/ground_truth/%d.npy' % dataset_n)
+        k = 0
+        while k < len(gt) - BLOCK//2:
+            start = k
+            end = k+BLOCK
+            task = (dataset_n, start, k+BLOCK)
+            tasks.append(task)
+            k += STEP
 
-    k = 0
-    while k < len(gt) - BLOCK//2:
-        logging.info('Started block: %d/%d', k, len(gt))
-        start = k
-        end = k+BLOCK
+    random.shuffle(tasks)
 
-        proc(dataset_n, start, end)
-        k += STEP
+    pool = multiprocessing.Pool()
+    pool.starmap(proc, tasks)
+    pool.join()

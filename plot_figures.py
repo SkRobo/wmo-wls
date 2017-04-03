@@ -221,16 +221,15 @@ def filtered_data(dataset_n, start_index, end_index):
     w = np.hstack([1/cov[:, 0, 0]**2, 1/cov[:, 1, 1]**2, 1/cov[:, 2, 2]**2])
     return m, w, indexes
 
-def err_worker(args):
-    path, params = args
-    dataset_n, start, alpha = params
+def cacl_errs(dataset_n, start, alpha):
+    if alpha is not None:
+        path = 'results/nonlinear/%d/%d_%.3f.npy' % (dataset_n, start, alpha)
+    else:
+        path = 'results/nonlinear/%d/%d_linear.npy' % (dataset_n, start)
     opt = np.load(path)
     m, w, indexes = filtered_data(dataset_n, start, start + BLOCK)
-    key = (dataset_n, start, alpha)
     s = np.hstack([opt[:, 0], opt[:, 1], opt[:, 2]])
-    xy_err = calc_xy_err(s, m, w, indexes)
-    phi_err = calc_phi_err(s, m, w, indexes)
-    return xy_err, phi_err
+    return calc_xy_err(s, m, w, indexes), calc_phi_err(s, m, w, indexes)
 
 def mit_nonlin_err(dataset_n=10, start=0):
     path_pattern = 'results/nonlinear/%d/%d_*.npy' % (dataset_n, start)
@@ -246,12 +245,13 @@ def mit_nonlin_err(dataset_n=10, start=0):
     phi_errs = []
 
     for alpha in alphas:
-        path = path_pattern.replace('*', '%.3f' % alpha)
-        opt = np.load(path)
-        m, w, indexes = filtered_data(dataset_n, start, start + BLOCK)
-        s = np.hstack([opt[:, 0], opt[:, 1], opt[:, 2]])
-        xy_errs.append(calc_xy_err(s, m, w, indexes))
-        phi_errs.append(calc_phi_err(s, m, w, indexes))
+        xy_err, phi_err = cacl_errs(dataset_n, start, alpha)
+        xy_errs.append(xy_err)
+        phi_errs.append(phi_err)
+
+    lin_xy, lin_phi = cacl_errs(dataset_n, start, None)
+    xy_errs = np.array(xy_errs)/lin_xy
+    phi_errs = np.array(phi_errs)/lin_phi
 
     plt.figure()
     ax = plt.subplot(111)
@@ -282,7 +282,8 @@ def mit_nonlin_dist():
         if len(opt) == BLOCK + 1:
             opt = opt[:1200]
         gt_path = './datasets/mit/ground_truth/%d.npy' % dataset_n
-        gt = poses_to_zero(np.load(gt_path)[start:start+BLOCK])
+        gt = np.load(gt_path)
+        gt = poses_to_zero(gt[start:start+BLOCK])
         assert(len(opt) == len(gt))
         res = np.linalg.norm(opt[-1, :2] - gt[-1, :2])/integr_dist(gt)
         results[alpha].append(res)
