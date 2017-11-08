@@ -5,6 +5,9 @@ For matching we use [CSM](https://github.com/AndreaCensi/csm). Precompiled
 We use slightly modified version of the CSM, so if you want to compile it
 yourself it's recommended to apply patch `csm.patch` first.
 
+## Dependencies
+- libgsl2
+
 ## Usage
 Download datasets archive:
 ```sh

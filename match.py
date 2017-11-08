@@ -61,6 +61,7 @@ def proc(scans, odometry, step, start, fov):
     iters = np.zeros(n, np.uint32)
     errs = np.zeros(n, np.float32)
     nvalid = np.zeros(n, np.uint16)
+    i = 0
     for i, v in enumerate(res):
         mask[i] = v['valid'] == 1
         match[i] = v['x']
