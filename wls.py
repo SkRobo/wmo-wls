@@ -167,4 +167,4 @@ if __name__ == '__main__':
         format='[%(asctime)s] %(levelname)s: %(message)s',
         level=logging.INFO)
     run_sk()
-    #run_mit()
+    run_mit()
