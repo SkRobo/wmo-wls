@@ -146,7 +146,7 @@ def gen_masks(indexes):
 def nonlin_optim(s0, alpha, args):
     m, w_xy, w_phi, indexes, indices, indptr = args
     masks = gen_masks(indexes)
-    return scipy.optimize.minimize(f, s0, jac=grad, method='BFGS',
+    return scipy.optimize.minimize(f, s0, jac=grad, method='L-BFGS-B',
         args=(m, w_xy, w_phi, alpha, indexes, indices, indptr, masks))
 
 RHO = 10

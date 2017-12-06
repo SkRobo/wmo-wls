@@ -349,6 +349,9 @@ if __name__ == '__main__':
     print('mit_cloud')
     mit_cloud()
 
+    print('mit_contour_rmse')
+    mit_contour_rmse()
+
     print('nonlin dist err')
     mit_nonlin_dist()
 

@@ -5,53 +5,58 @@ For scan-matching we use [CSM](https://github.com/AndreaCensi/csm). Precompiled
 We are using slightly modified version of the CSM, so if you want to compile it
 yourself it's recommended to apply patch `csm.patch` first.
 
-## Dependencies
-- libgsl2
+## Dependencies installation
+For modern Debian based distribution you can execute the following command:
+```sh
+sudo apt-get install libgsl2 python3 python3-numpy python3-scipy python3-matplotlib python3-cffi texlive texlive-latex-extra dvipng
+```
+
+Additionally you'll need progressbar2 Python library, you can install it using `pip3`:
+```sh
+sudo pip3 install progressbar2
+```
+
 
 ## Usage
-Download datasets archive:
+To begin download and unpack datasets archive:
 ```sh
 wget https://github.com/SkRobo/wmo-wls/releases/download/0.1/datasets.tar.bz2
+bzip2 -dc datasets.tar.bz2 | tar xv
 ```
 
-And unpack it:
+If you only want to build figures or examine data you can download results using this command:
 ```sh
-$ bzip2 -dc datasets.tar.bz2 | tar xv
+wget https://github.com/SkRobo/wmo-wls/releases/download/0.2/results.tar.bz2
+bzip2 -dc results.tar.bz2 | tar xv
 ```
 
-Next perform matching:
+Otherwise execute the following commands. First perform matching:
 ```sh
-$ ./match.py
+./match.py
 ```
 Results will be saved in the `./results/match/` folder.
 
 Finally perform optimization:
 ```sh
-$ ./wls.py
+./wls.py
 ```
 Results in the form of trajectories will be saved in the
 `./results/wls/` folder.
 
+To calculate trajectories using keyframe apporach run:
+```sh
+./keyframes.py
+```
+
 To perfrom nonlinear optimization for set of alphas run:
 ```sh
-$ ./nonlinear.py 1
+./nonlinear.py
 ```
 Here argument is the index of dataset to be optimized for.
 Results in the form of trajectories will be saved in the
 `./results/nonlinear/` folder.
 
-If you don't want to wait for nonlinear optimization to end you can download
-precomputed results:
-```sh
-wget https://github.com/SkRobo/wmo-wls/releases/download/0.1/L-BFGS-B.tar.bz2
-```
-
-To unpack them run:
-```sh
-$ bzip2 -dc L-BFGS-B.tar.bz2 | tar xv -C results/
-```
-
-To plot figures used in the paper run:
+Finally to plot figures used in the WMO-WLS paper run:
 ```sh
 $ ./plot_figures.py
 ```
