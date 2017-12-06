@@ -6,10 +6,13 @@ from scipy import sparse
 import numpy as np
 from scipy.sparse.linalg import lsqr
 import scipy, random
-import sys, os, logging, multiprocessing
+import sys, os, logging, multiprocessing, progressbar
 
-ALPHAS = [0.001, 0.002, 0.003, 0.004, 0.005, 0.006, 0.007, 0.008, 0.009,
-          0.01, 0.025, 0.05, 0.075, 0.1, 0.5, 1.0]
+ALPHAS = [
+    0.001, 0.025, 0.005, 0.0075,
+    0.01, 0.025, 0.05, 0.075,
+    0.1, 0.5, 1.0,
+]
 
 def calc_p_deriv_i(i, s_phi, indexes, masks):
     k = 0
@@ -149,7 +152,8 @@ def nonlin_optim(s0, alpha, args):
 RHO = 10
 
 
-def proc(dataset_n, start_index, end_index):
+def worker(args):
+    dataset_n, start_index, end_index, queue = args
     os.makedirs('./results/nonlinear/%d/' % dataset_n, exist_ok=True)
 
     match, cov, indexes, odom = mit_load_data(dataset_n)
@@ -168,9 +172,15 @@ def proc(dataset_n, start_index, end_index):
 
     logging.info('---- Linear optimization n: %d, start: %d',
             dataset_n, start_index)
-
-    d0 = wls_optim(match, cov, indexes, odom, perc=RHO).astype(np.float32)
-    np.save('results/nonlinear/%d/%d_linear.npy' % (dataset_n, start_index), d0)
+    out_path = 'results/nonlinear/%d/%d_linear.npy' % (
+        dataset_n, start_index)
+    if os.path.exists(out_path):
+        logging.info('---- Reusing linear optimization n: %d, start: %d',
+            dataset_n, start_index)
+        d0 = np.load(out_path)
+    else:
+        d0 = wls_optim(match, cov, indexes, odom, perc=RHO).astype(np.float32)
+        np.save(out_path, d0)
 
     d0 = np.hstack([d0[:, 0], d0[:, 1], d0[:, 2]])
 
@@ -183,6 +193,14 @@ def proc(dataset_n, start_index, end_index):
     for alpha in reversed(ALPHAS):
         logging.info('==== Started n: %d, start: %d, alpha: %.3f',
             dataset_n, start_index, alpha)
+        out_path = 'results/nonlinear/%d/%d_%.3f.npy' % (
+            dataset_n, start_index, alpha)
+        if os.path.exists(out_path):
+            d = np.load(out_path)
+            s0 = np.hstack([d[:, 0], d[:, 1], d[:, 2]])
+            logging.info('==== Reusing n: %d, start: %d, alpha: %.3f',
+                dataset_n, start_index, alpha)
+            continue
         lin = f(d0, m, w_xy, w_phi, alpha, indexes, indices, indptr)
         init = f(s0, m, w_xy, w_phi, alpha, indexes, indices, indptr)
 
@@ -197,32 +215,39 @@ def proc(dataset_n, start_index, end_index):
         l = len(res.x)//3
         res_data = np.array([res.x[:l], res.x[l:-l], res.x[-l:]]).T
 
-        np.save('results/nonlinear/%d/%d_%.3f.npy' %
-            (dataset_n, start_index, alpha), res_data)
+        np.save(out_path, res_data)
         s0 = res.x
+
+        queue.put(None)
 
 
 BLOCK = 1200
 STEP = 600
 
 if __name__ == '__main__':
-    logging.basicConfig(
-        format='[%(asctime)s] %(levelname)s: %(message)s',
-        level=logging.INFO)
+    #logging.basicConfig(
+    #    format='[%(asctime)s] %(levelname)s: %(message)s',
+    #    level=logging.INFO)
 
     tasks = []
+    pool = multiprocessing.Pool()
+    queue = multiprocessing.Manager().Queue()
     for dataset_n in range(24):
         gt = np.load('datasets/mit/ground_truth/%d.npy' % dataset_n)
         k = 0
         while k < len(gt) - BLOCK//2:
             start = k
             end = k+BLOCK
-            task = (dataset_n, start, k+BLOCK)
+            task = (dataset_n, start, k+BLOCK, queue)
             tasks.append(task)
             k += STEP
 
     random.shuffle(tasks)
 
-    pool = multiprocessing.Pool()
-    pool.starmap(proc, tasks)
+    pool.imap(worker, tasks, chunksize=1)
+    bar = progressbar.ProgressBar()
+    for _ in bar(range(len(tasks)*len(ALPHAS))):
+        queue.get()
+    pool.close()
     pool.join()
+

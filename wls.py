@@ -3,7 +3,7 @@ from tools import rot
 import numpy as np
 from scipy.sparse.linalg import lsqr
 from scipy import sparse
-import scipy, logging, os, multiprocessing
+import scipy, logging, os, multiprocessing, progressbar
 from tools import integr
 
 def get_predicts(poses, indexes):
@@ -105,8 +105,9 @@ def wls_optim(match, cov, indexes, odom, max_win=None, perc=10):
 
 MIT_MATCH = './results/match/mit/%s/%d.npy'
 MIT_ODOMETRY = './datasets/mit/odometry/%d.npy'
-MIT_OUT = './results/wls/mit/%d/'
+MIT_OUT = './results/wls/mit/%d/%d/'
 MIT_RHO = 10
+RHOS = list(range(31))
 
 SK_MATCH = './results/match/skoltech/%s.npy'
 SK_ODOMETRY = './datasets/skoltech/odometry.npy'
@@ -120,22 +121,35 @@ def mit_load_data(n):
     odom = np.load(MIT_ODOMETRY % n)
     return match, cov, indexes, odom
 
-def mit_worker(n):
+def mit_worker(task):
+    n, w, rho = task
+    logging.info(
+        'Processing... Dataset: %d, window: %d, rho: %d' % (n, w, rho))
     match, cov, indexes, odom = mit_load_data(n)
-    for w in range(1, 21):
-        logging.info('Processing: %d, win %d' % (n, w))
-        opt = integr(wls_optim(match, cov, indexes, odom, w, MIT_RHO))
-        out_path = MIT_OUT % w
-        np.save(out_path + '%d.npy' % n, opt)
-        logging.info('Done: %d, win %d' % (n, w))
+    opt = integr(wls_optim(match, cov, indexes, odom, w, rho))
+    out_path = MIT_OUT % (rho, w)
+    np.save(out_path + '%d.npy' % n, opt)
+    logging.info('Done. Dataset: %d, window: %d' % (n, w))
 
 def run_mit():
     logging.info('Started MIT')
+    for rho in RHOS:
+        for w in range(1, 21):
+            os.makedirs(MIT_OUT % (rho, w), exist_ok=True)
+
+    tasks = []
     for w in range(1, 21):
-        os.makedirs(MIT_OUT % w, exist_ok=True)
+        for n in range(24):
+            for rho in RHOS:
+                tasks.append((n, w, rho))
+    # to make memory profile usage more evenly distributed
+    np.random.shuffle(tasks)
 
     pool = multiprocessing.Pool()
-    pool.map(mit_worker, range(24))
+    handle = pool.imap_unordered(mit_worker, tasks, chunksize=1)
+    bar = progressbar.ProgressBar(max_value=len(tasks))
+    for _ in bar(handle):
+        pass
     pool.close()
     pool.join()
     logging.info('Finished MIT')
@@ -163,8 +177,8 @@ def run_sk():
     logging.info('Finished Skoltech')
 
 if __name__ == '__main__':
-    logging.basicConfig(
-        format='[%(asctime)s] %(levelname)s: %(message)s',
-        level=logging.INFO)
-    run_sk()
+    #logging.basicConfig(
+    #    format='[%(asctime)s] %(levelname)s: %(message)s',
+    #    level=logging.INFO)
+    #run_sk()
     run_mit()

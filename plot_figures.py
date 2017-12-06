@@ -10,6 +10,12 @@ from nonlinear import ALPHAS
 import numpy as np
 import os
 
+#[8700:8800]
+NONLINEAR_PATH = 'results/nonlinear/'
+#NONLINEAR_PATH = 'nonlinear_l_bfs_b/'
+
+ONLINE_PATH = 'results/online/'
+
 # ================= pose graphs ====================
 
 def plot_adj_f2f():
@@ -43,6 +49,7 @@ def plot_adj_opt():
     plt.tight_layout()
     plt.grid()
     plt.savefig('./figures/adj_opt.eps', dpi=300)
+
 
 # ================= check sk relation ==============
 
@@ -81,32 +88,11 @@ def sk_plot_all_clouds(win=10):
 BLOCK = 1200
 STEP = 600
 
-def calc_rms_kf():
+def calc_rms_core(path):
     data = []
     dists = []
     for n in range(24):
-        kf = np.load('./results/keyframe/mit/%d.npy' % n)
-        gt = poses_to_zero(np.load('./datasets/mit/ground_truth/%d.npy' % n))
-        #
-        k = 0
-        while k < len(gt) - BLOCK//2:
-            kf_chunk = poses_to_zero(kf[k:k+BLOCK])
-            gt_chunk = poses_to_zero(gt[k:k+BLOCK])
-            #
-            d = integr_dist(gt_chunk)
-            dists.append(d)
-            diff = np.linalg.norm(kf_chunk[-1, :2] - gt_chunk[-1, :2])
-            data.append(diff/d)
-            #
-            k += STEP
-    data = np.array(data)
-    return np.sqrt(np.mean(data**2))
-
-def calc_rms(win):
-    data = []
-    dists = []
-    for n in range(24):
-        optim = np.load('./results/wls/mit/%d/%d.npy' % (win, n))
+        optim = np.load(path % n)
         gt = poses_to_zero(np.load('./datasets/mit/ground_truth/%d.npy' % n))
         #
         k = 0
@@ -123,28 +109,55 @@ def calc_rms(win):
     data = np.array(data)
     return np.sqrt(np.mean(data**2))
 
-def mit_rmse():
+def calc_rms_kf():
+    return calc_rms_core('./results/keyframe/mit/%d.npy')
+
+def calc_rms(win, rho):
+    return calc_rms_core('./results/wls/mit/%d/%d/' % (rho, win) + '%d.npy')
+
+def mit_rmse_rho():
     plt.figure()
-    data = [calc_rms(i) for i in range(1, 21)]
-    plt.plot(range(2, 21), data[1:], color='black', label='WMO-WLS')
-    plt.plot(range(1, 21), data[:1]*20, '-.',
-        color='black', label='Frame-to-frame')
-    plt.plot(range(1, 21), [calc_rms_kf()]*20, '--',
-        color='black', label='Keyframe')
-    plt.legend()
-    plt.xlim([2, 20])
+    RHOS = range(31)
+    data = [calc_rms(20, rho) for rho in RHOS]
+    plt.plot(RHOS, data, color='black')
     plt.grid()
-    plt.xlabel('Window size')
+    plt.xlabel(r'$\rho$')
     plt.ylabel('RMSE')
     plt.tight_layout()
-    plt.savefig('./figures/mit/rmse.eps', dpi=300)
+    plt.savefig('./figures/mit/rmse_rho.eps', dpi=300)
 
+def mit_contour_rmse():
+    plt.figure()
+    rhos = range(31)
+    wins = range(2, 21)
+    bar = progressbar.ProgressBar(max_value=len(rhos))
+    
+    data = np.array([[calc_rms(w, rho) for w in wins] for rho in bar(rhos)])
+
+    mind = np.where(np.array(data) == np.min(data))
+    w_i = mind[0][0]
+    r_i = mind[1][0]
+    print("Min RMSE: w=%d, rho=%d%%, value=%f" % (wins[w_i], rhos[r_i],
+        data[r_i][w_i]))
+
+    data = 1000*np.array(data).T
+
+    CS = plt.contour(rhos, wins, data,
+        [7.03, 7.1, 7.2, 7.5, 9.02, 11.8], colors='k')
+    plt.clabel(CS, fontsize=12)
+
+    plt.grid()
+    plt.xlabel(r'$\rho$')
+    plt.ylabel(r'Window size ($\omega$)')
+    plt.tight_layout()
+    plt.title('RMSE, mm/m')
+    plt.savefig('./figures/mit/rmse_comtour.eps', dpi=300)
 
 # ================= MIT comparison ==================
-def mit_comparison(n=10, end=None):
+def mit_comparison(n=10, win=20, rho=10, end=None):
     plt.figure()
     gt = poses_to_zero(np.load('./datasets/mit/ground_truth/%d.npy' % n))
-    poses = np.load('./results/wls/mit/20/%d.npy' % n)
+    poses = np.load('./results/wls/mit/%d/%d/%d.npy' % (rho, win, n))
     kf = np.load('./results/keyframe/mit/%d.npy' % n)
 
     plot_diff_abs_comp(gt[:end], poses[:end], kf[:end])
@@ -223,16 +236,16 @@ def filtered_data(dataset_n, start_index, end_index):
 
 def cacl_errs(dataset_n, start, alpha):
     if alpha is not None:
-        path = 'results/nonlinear/%d/%d_%.3f.npy' % (dataset_n, start, alpha)
+        path = NONLINEAR_PATH + '%d/%d_%.3f.npy' % (dataset_n, start, alpha)
     else:
-        path = 'results/nonlinear/%d/%d_linear.npy' % (dataset_n, start)
+        path = NONLINEAR_PATH + '%d/%d_linear.npy' % (dataset_n, start)
     opt = np.load(path)
     m, w, indexes = filtered_data(dataset_n, start, start + BLOCK)
     s = np.hstack([opt[:, 0], opt[:, 1], opt[:, 2]])
     return calc_xy_err(s, m, w, indexes), calc_phi_err(s, m, w, indexes)
 
 def mit_nonlin_err(dataset_n=10, start=0):
-    path_pattern = 'results/nonlinear/%d/%d_*.npy' % (dataset_n, start)
+    path_pattern = NONLINEAR_PATH + '%d/%d_*.npy' % (dataset_n, start)
     paths = glob.glob(path_pattern)
     params = [filter_params(path) for path in paths]
 
@@ -269,38 +282,44 @@ def mit_nonlin_err(dataset_n=10, start=0):
     plt.savefig('figures/mit/nonlin_err.eps', dpi=300)
 
 def mit_nonlin_dist():
-    paths = glob.glob('results/nonlinear/*/*.npy')
+    paths = glob.glob(NONLINEAR_PATH + '*/*.npy')
     params = [filter_params(path) for path in paths]
-
     alphas = sorted(set([alpha for _, _, alpha in params if alpha is not None]))
     results = dict((alpha, []) for alpha in alphas)
     results[None] = []
     bar = progressbar.ProgressBar(max_value=len(paths))
     for path, (dataset_n, start, alpha) in bar(zip(paths, params)):
+        # skip if optimization was not finished for all alphas
+        if (dataset_n, start, alphas[0]) not in params:
+            continue
+        gt_path = './datasets/mit/ground_truth/%d.npy' % dataset_n
+        gt = np.load(gt_path)
+        gt = poses_to_zero(gt[start:start+BLOCK])
+        integr_gt = integr_dist(gt)
         opt = integr(np.load(path))
         # bug in the nonlinear.py line 144
         if len(opt) == BLOCK + 1:
             opt = opt[:1200]
-        gt_path = './datasets/mit/ground_truth/%d.npy' % dataset_n
-        gt = np.load(gt_path)
-        gt = poses_to_zero(gt[start:start+BLOCK])
         assert(len(opt) == len(gt))
-        res = np.linalg.norm(opt[-1, :2] - gt[-1, :2])/integr_dist(gt)
+        res = np.linalg.norm(opt[-1, :2] - gt[-1, :2])/integr_gt
         results[alpha].append(res)
+
     res = np.array([
         np.sqrt(np.mean(np.array(results[alpha])**2))
         for alpha in alphas
     ])
     lin_res = np.sqrt(np.mean(np.array(results[None])**2))
-    res /= lin_res
+    lin_res = np.array([lin_res for alpha in alphas])
+    #res /= lin_res
 
     plt.figure()
     ax = plt.subplot(111)
-    ax.plot(alphas, res, 'black', label=r'$RMSE(\alpha)/RMSE(+\infty)$')
-    plt.legend()
+    ax.plot(alphas, 100*res, 'black')
+    ax.plot(alphas, 100*lin_res, '--', color='black')
     plt.xlim([0.001, 1])
-    plt.ylim([0.95, 1.05])
+    plt.ylim([9, 11])
     plt.xlabel(r'$\alpha$')
+    plt.ylabel('RMSE, mm/m')
     ax.set_xscale("log", nonposx='clip')
     plt.grid()
     plt.savefig('figures/mit/nonlin_dist.eps', dpi=300)
@@ -325,8 +344,6 @@ if __name__ == '__main__':
     print('sk_plot_all_clouds')
     sk_plot_all_clouds(10)
 
-    print('mit_rmse')
-    mit_rmse()
     print('mit_comparison')
     mit_comparison(end=3500)
     print('mit_cloud')
@@ -337,3 +354,4 @@ if __name__ == '__main__':
 
     print('nonlin err')
     mit_nonlin_err()
+

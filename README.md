@@ -1,8 +1,8 @@
 # WMO-WLS: Windowed Multiscan Optimization using Weighted Least Squares
 
-For matching we use [CSM](https://github.com/AndreaCensi/csm). Precompiled
+For scan-matching we use [CSM](https://github.com/AndreaCensi/csm). Precompiled
 `libcsm.so` and `sm2` for 64-bit Linux located inside `csm` folder.
-We use slightly modified version of the CSM, so if you want to compile it
+We are using slightly modified version of the CSM, so if you want to compile it
 yourself it's recommended to apply patch `csm.patch` first.
 
 ## Dependencies
