@@ -57,17 +57,17 @@ Results in the form of trajectories will be saved in the
 If you don't want to wait for nonlinear optimization to end you can download
 precomputed results:
 ```sh
-wget https://github.com/SkRobo/wmo-wls/releases/download/0.1/L-BFGS-B.tar.bz2
+wget https://github.com/SkRobo/wmo-wls/releases/download/0.2/nonlinear.tar.bz2
 ```
 
 To unpack them run:
 ```sh
-$ bzip2 -dc L-BFGS-B.tar.bz2 | tar xv -C results/
+bzip2 -dc nonlinear.tar.bz2 | tar xv -C results/
 ```
 
 To plot figures used in the paper run:
 ```sh
-$ ./plot_figures.py
+./plot_figures.py
 ```
 Figures will be saved in the `./figures/` folder.
 
