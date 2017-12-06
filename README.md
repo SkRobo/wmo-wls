@@ -18,19 +18,17 @@ sudo pip3 install progressbar2
 
 
 ## Usage
-To begin download and unpack datasets archive:
+Download datasets archive:
 ```sh
 wget https://github.com/SkRobo/wmo-wls/releases/download/0.1/datasets.tar.bz2
+```
+
+And unpack it:
+```sh
 bzip2 -dc datasets.tar.bz2 | tar xv
 ```
 
-If you only want to build figures or examine data you can download results using this command:
-```sh
-wget https://github.com/SkRobo/wmo-wls/releases/download/0.2/results.tar.bz2
-bzip2 -dc results.tar.bz2 | tar xv
-```
-
-Otherwise execute the following commands. First perform matching:
+Next perform matching:
 ```sh
 ./match.py
 ```
@@ -56,7 +54,18 @@ Here argument is the index of dataset to be optimized for.
 Results in the form of trajectories will be saved in the
 `./results/nonlinear/` folder.
 
-Finally to plot figures used in the WMO-WLS paper run:
+If you don't want to wait for nonlinear optimization to end you can download
+precomputed results:
+```sh
+wget https://github.com/SkRobo/wmo-wls/releases/download/0.1/L-BFGS-B.tar.bz2
+```
+
+To unpack them run:
+```sh
+$ bzip2 -dc L-BFGS-B.tar.bz2 | tar xv -C results/
+```
+
+To plot figures used in the paper run:
 ```sh
 $ ./plot_figures.py
 ```
